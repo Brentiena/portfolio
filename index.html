@@ -461,7 +461,8 @@ async function loadSheet() {
     const text = await res.text();
     parseCSV(text);       // fully replaces positions
     savePositions();      // persist to localStorage
-    setStatus('Gesynchroniseerd ✓ ' + new Date().toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit'}), 'ok');
+    const headerInfo = text.split('\n')[0].substring(0, 80);
+    setStatus('Gesynchroniseerd ✓ ' + new Date().toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit'}) + ' — ' + positions.length + ' posities geladen', 'ok');
     renderAll();
   } catch(e) {
     setStatus('Fout: controleer de URL', 'err');
@@ -472,7 +473,7 @@ function parseCSV(text) {
   const lines = text.trim().split('\n').filter(l => l.trim());
   if (lines.length < 2) return;
 
-  // Auto-detect delimiter: semicolon or comma
+  // Detect delimiter: semicolon (Dutch locale) or comma
   const delimiter = lines[0].includes(';') ? ';' : ',';
 
   // Parse a CSV line respecting quoted fields
@@ -489,18 +490,28 @@ function parseCSV(text) {
     return result;
   }
 
-  // Clean a numeric string: remove %, currency symbols, thousand separators
+  // Parse Dutch/English numbers
+  // Dutch: 13.583,00 → 13583 | English: 13,583.00 → 13583 | Simple: 8,00 → 8
   function parseNum(s) {
     if (!s) return 0;
-    // Remove %, €, spaces, and thousand separators (. when followed by 3 digits and another separator or end)
-    const cleaned = s.replace(/[€%\s]/g, '').replace(/\.(?=\d{3}(?:[,.]|$))/g, '').replace(',', '.');
-    return parseFloat(cleaned) || 0;
+    s = s.replace(/[€%\s]/g, '').trim();
+    if (!s) return 0;
+    if (/^\d{1,3}(\.\d{3})*(,\d*)?$/.test(s)) return parseFloat(s.replace(/\./g,'').replace(',','.')) || 0;
+    if (/^\d{1,3}(,\d{3})*(\.\d*)?$/.test(s)) return parseFloat(s.replace(/,/g,'')) || 0;
+    if (/^\d+,\d+$/.test(s)) return parseFloat(s.replace(',','.')) || 0;
+    return parseFloat(s) || 0;
   }
 
   const headers = parseLine(lines[0]).map(h => h.replace(/"/g,'').toLowerCase().trim());
-  const idx = n => headers.indexOf(n);
+  const expectedCols = headers.length;
 
-  // Find column indices by name — gracefully ignore unknown columns like '#'
+  // Fuzzy finder: handles truncated column names like 'totalewaarde' vs 'totalewaarde'
+  const idx = n => {
+    const exact = headers.indexOf(n);
+    if (exact !== -1) return exact;
+    return headers.findIndex(h => h.startsWith(n.slice(0,8)) || n.startsWith(h.slice(0,8)));
+  };
+
   const colNaam = idx('naam');
   const colType = idx('type');
   const colBelegd = idx('belegd');
@@ -509,11 +520,28 @@ function parseCSV(text) {
   const colExpReturn = idx('expreturn');
   const colTotaleWaarde = idx('totalewaarde');
 
-  if (colNaam === -1) return; // Can't parse without naam column
+  if (colNaam === -1) return;
 
   const parsed = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = parseLine(lines[i]).map(c => c.replace(/"/g,'').trim());
+    let cols = parseLine(lines[i]).map(c => c.replace(/"/g,'').trim());
+
+    // Dutch comma-decimal fix: if comma is delimiter AND we got too many columns,
+    // numbers like "13.583,00" were split into "13.583" + "00" — rejoin them
+    if (delimiter === ',' && cols.length > expectedCols) {
+      const merged = [];
+      for (let j = 0; j < cols.length; j++) {
+        const prev = merged[merged.length - 1];
+        // If previous cell ends with digits and current is just digits → it was a decimal split
+        if (merged.length > 0 && /\d$/.test(prev) && /^\d{1,2}$/.test(cols[j]) && !prev.includes('.')) {
+          merged[merged.length - 1] = prev + ',' + cols[j];
+        } else {
+          merged.push(cols[j]);
+        }
+      }
+      cols = merged;
+    }
+
     const naam = colNaam >= 0 ? cols[colNaam] : '';
     if (!naam) continue;
 
