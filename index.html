@@ -350,12 +350,7 @@
       </div>
       <div class="setup-step">
         <div class="step-num">3</div>
-        <div class="step-text">Vul per positie een rij in. In kolom <code>LiveKoers</code> gebruik je de formule:<br>
-          <code>=GOOGLEFINANCE("AMS:IWDA"; "price")</code> (vaste ticker tussen aanhalingstekens)<br>
-          Voor crypto: <code>=GOOGLEFINANCE("BTC-EUR"; "price")</code><br>
-          Voor cash / spaarrekening: vul gewoon het saldo in als getal.<br>
-          Let op: gebruik een puntkomma (<code>;</code>) als scheidingsteken in Nederlandstalige Sheets.
-        </div>
+        <div class="step-text">Vul per positie een rij in. De kolom <code>TotaleWaarde</code> is de huidige waarde vanuit je broker — dit update je één keer per maand handmatig. Laat cellen leeg als je de waarde niet hebt, het dashboard valt dan terug op het berekende totaal belegd.</div>
       </div>
       <div class="setup-step">
         <div class="step-num">4</div>
@@ -476,20 +471,60 @@ async function loadSheet() {
 function parseCSV(text) {
   const lines = text.trim().split('\n').filter(l => l.trim());
   if (lines.length < 2) return;
-  const headers = lines[0].split(',').map(h => h.trim().replace(/"/g,'').toLowerCase());
+
+  // Auto-detect delimiter: semicolon or comma
+  const delimiter = lines[0].includes(';') ? ';' : ',';
+
+  // Parse a CSV line respecting quoted fields
+  function parseLine(line) {
+    const result = [];
+    let cur = '', inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQuotes = !inQuotes; }
+      else if (c === delimiter && !inQuotes) { result.push(cur.trim()); cur = ''; }
+      else { cur += c; }
+    }
+    result.push(cur.trim());
+    return result;
+  }
+
+  // Clean a numeric string: remove %, currency symbols, thousand separators
+  function parseNum(s) {
+    if (!s) return 0;
+    // Remove %, €, spaces, and thousand separators (. when followed by 3 digits and another separator or end)
+    const cleaned = s.replace(/[€%\s]/g, '').replace(/\.(?=\d{3}(?:[,.]|$))/g, '').replace(',', '.');
+    return parseFloat(cleaned) || 0;
+  }
+
+  const headers = parseLine(lines[0]).map(h => h.replace(/"/g,'').toLowerCase().trim());
   const idx = n => headers.indexOf(n);
+
+  // Find column indices by name — gracefully ignore unknown columns like '#'
+  const colNaam = idx('naam');
+  const colType = idx('type');
+  const colBelegd = idx('belegd');
+  const colStartdatum = idx('startdatum');
+  const colMaandelijks = idx('maandelijks');
+  const colExpReturn = idx('expreturn');
+  const colTotaleWaarde = idx('totalewaarde');
+
+  if (colNaam === -1) return; // Can't parse without naam column
+
   const parsed = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.trim().replace(/"/g,''));
-    if (!cols[idx('naam')]) continue;
+    const cols = parseLine(lines[i]).map(c => c.replace(/"/g,'').trim());
+    const naam = colNaam >= 0 ? cols[colNaam] : '';
+    if (!naam) continue;
+
     parsed.push({
-      name: cols[idx('naam')] || '',
-      type: parseInt(cols[idx('type')]) || 0,
-      invested: parseFloat(cols[idx('belegd')]) || 0,
-      startDate: cols[idx('startdatum')] || new Date().toISOString().slice(0,10),
-      monthly: parseFloat(cols[idx('maandelijks')]) || 0,
-      expReturn: parseFloat(cols[idx('expreturn')]) || 0,
-      totalValue: parseFloat(cols[idx('totalewaarde')]) || 0,
+      name: naam,
+      type: colType >= 0 ? (parseInt(cols[colType]) || 0) : 0,
+      invested: colBelegd >= 0 ? parseNum(cols[colBelegd]) : 0,
+      startDate: colStartdatum >= 0 ? (cols[colStartdatum] || new Date().toISOString().slice(0,10)) : new Date().toISOString().slice(0,10),
+      monthly: colMaandelijks >= 0 ? parseNum(cols[colMaandelijks]) : 0,
+      expReturn: colExpReturn >= 0 ? parseNum(cols[colExpReturn]) : 0,
+      totalValue: colTotaleWaarde >= 0 ? parseNum(cols[colTotaleWaarde]) : 0,
     });
   }
   if (parsed.length > 0) positions = parsed;
