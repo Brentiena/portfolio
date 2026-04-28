@@ -143,6 +143,22 @@
   .expand-btn.open { color: var(--green); transform: rotate(90deg); display: inline-block; }
   .empty-state { padding: 3rem 1rem; text-align: center; color: var(--text3); font-size: 13px; }
 
+  /* VASTRENTEND */
+  .vr-timeline { display: flex; flex-direction: column; gap: 8px; }
+  .vr-event { display: flex; align-items: center; gap: 14px; background: var(--bg2); border: 0.5px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+  .vr-event.soon { border-color: var(--amber); }
+  .vr-event.past { opacity: .5; }
+  .vr-date { font-family: var(--mono); font-size: 11px; color: var(--text3); min-width: 80px; }
+  .vr-name { font-size: 13px; font-weight: 500; flex: 1; }
+  .vr-amount { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--green); }
+  .vr-badge { font-size: 10px; font-family: var(--mono); padding: 2px 8px; border-radius: 4px; }
+  .vr-badge.bullet { background: rgba(91,156,246,.15); color: #5b9cf6; }
+  .vr-badge.periodic { background: rgba(74,222,154,.12); color: var(--green); }
+  .vr-badge.done { background: var(--bg4); color: var(--text3); }
+  .status-active { color: var(--green); font-size: 11px; font-family: var(--mono); }
+  .status-done { color: var(--text3); font-size: 11px; font-family: var(--mono); }
+  .status-soon { color: var(--amber); font-size: 11px; font-family: var(--mono); }
+
   /* SETUP BOX */
   .setup-box { background: var(--bg2); border: 0.5px solid var(--border2); border-radius: 10px; padding: 1.5rem; margin-top: 2rem; }
   .setup-box h3 { font-size: 14px; font-weight: 600; margin-bottom: 1rem; }
@@ -171,6 +187,7 @@
     <button class="tab" onclick="showTab('scenario')">Scenario-analyse</button>
     <button class="tab" onclick="showTab('rebalance')">Rebalancing</button>
     <button class="tab" onclick="showTab('dca')">Maandelijks beleggen</button>
+    <button class="tab" onclick="showTab('vastrentend')">Vastrentend</button>
     <button class="tab" onclick="showTab('setup')">Instellen</button>
   </div>
 
@@ -327,6 +344,40 @@
       </table>
     </div>
     <div style="font-size:11px;color:var(--text3);margin-top:8px">Posities beheer je via het Portfolio tabblad. Maandelijks bedrag en verwacht rendement zijn hier direct aanpasbaar.</div>
+  </div>
+
+  <!-- VASTRENTEND -->
+  <div id="tab-vastrentend" class="page">
+    <div class="metric-grid">
+      <div class="metric"><div class="metric-label">Totaal ingelegd</div><div class="metric-value" id="vr-total-inv">—</div></div>
+      <div class="metric"><div class="metric-label">Verwachte eindwaarde</div><div class="metric-value pos" id="vr-total-end">—</div></div>
+      <div class="metric"><div class="metric-label">Al ontvangen</div><div class="metric-value pos" id="vr-received">—</div></div>
+      <div class="metric"><div class="metric-label">Nog te ontvangen</div><div class="metric-value" id="vr-remaining">—</div></div>
+    </div>
+
+    <div class="section-label">Komende uitbetalingen</div>
+    <div id="vr-timeline" style="margin-bottom:1.5rem"></div>
+
+    <div class="section-label">Vastrentende posities</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th style="width:16%">Naam</th>
+          <th style="width:9%">Type</th>
+          <th style="width:9%">Bedrag €</th>
+          <th style="width:9%">Start</th>
+          <th style="width:8%">Looptijd</th>
+          <th style="width:7%">Rente %</th>
+          <th style="width:11%">Uitbetaling</th>
+          <th style="width:11%">Eindwaarde</th>
+          <th style="width:11%">Volgende uitbetaling</th>
+          <th style="width:9%">Status</th>
+          <th style="width:4%"></th>
+        </tr></thead>
+        <tbody id="vr-body"></tbody>
+      </table>
+    </div>
+    <button class="add-btn" onclick="addVRRow()">+ investering toevoegen</button>
   </div>
 
   <!-- SETUP -->
@@ -560,12 +611,13 @@ function parseCSV(text) {
 
 // --- TABS ---
 function showTab(t) {
-  document.querySelectorAll('.tab').forEach((b,i) => b.classList.toggle('active', ['portfolio','scenario','rebalance','dca','setup'][i]===t));
+  document.querySelectorAll('.tab').forEach((b,i) => b.classList.toggle('active', ['portfolio','scenario','rebalance','dca','vastrentend','setup'][i]===t));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-'+t).classList.add('active');
   if (t==='scenario') renderScenario();
   if (t==='rebalance') renderRebalance();
   if (t==='dca') renderDCA();
+  if (t==='vastrentend') renderVastrentend();
 }
 
 // --- PORTFOLIO ---
@@ -665,10 +717,13 @@ function renderPortfolio() {
 }
 
 function updateMetrics() {
-  const tv = positions.reduce((s,p) => s+currentValue(p), 0);
-  const ti = positions.reduce((s,p) => s+totalInvested(p), 0);
+  const tv = positions.reduce((s,p) => s+currentValue(p), 0)
+           + vrPositions.reduce((s,p) => s+vrTotalCurrentValue(p), 0);
+  const ti = positions.reduce((s,p) => s+totalInvested(p), 0)
+           + vrPositions.reduce((s,p) => s+(p.amount||0), 0);
   const tr = tv - ti;
-  const te = positions.reduce((s,p) => s+currentValue(p)*(p.expReturn/100), 0);
+  const te = positions.reduce((s,p) => s+currentValue(p)*(p.expReturn/100), 0)
+           + vrPositions.reduce((s,p) => s+(p.amount||0)*((p.rate||0)/100), 0);
   document.getElementById('m-total').textContent = fmt(tv);
   document.getElementById('m-inv').textContent = fmt(ti);
   document.getElementById('m-ret').textContent = (tr>=0?'+':'')+fmt(tr);
@@ -927,6 +982,164 @@ function loadPositions() {
   } catch(e) { positions = []; }
 }
 
+// --- VASTRENTEND ---
+let vrPositions = [];
+
+function saveVR() { localStorage.setItem('vr-positions', JSON.stringify(vrPositions)); }
+function loadVR() {
+  try { const s = localStorage.getItem('vr-positions'); if (s) vrPositions = JSON.parse(s); } catch(e) { vrPositions = []; }
+}
+
+function addVRRow() {
+  vrPositions.push({ name:'Nieuwe investering', payoutType:'bullet', amount:1000, startDate:new Date().toISOString().slice(0,10), months:24, rate:8 });
+  saveVR(); renderVastrentend();
+}
+
+// Calculate all payout events for a VR position
+function vrPayouts(p) {
+  const start = new Date(p.startDate);
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + (p.months || 12));
+  const rate = (p.rate || 0) / 100;
+  const amount = p.amount || 0;
+  const events = [];
+
+  if (p.payoutType === 'bullet') {
+    // Single payout at end: principal + all interest
+    const totalInterest = amount * rate * ((p.months || 12) / 12);
+    events.push({ date: end, amount: amount + totalInterest, label: 'Hoofdsom + rente', type: 'bullet' });
+  } else {
+    // Periodic: annual interest payments + principal at end
+    const years = Math.ceil((p.months || 12) / 12);
+    const annualInterest = amount * rate;
+    for (let y = 1; y <= years; y++) {
+      const d = new Date(start);
+      d.setFullYear(d.getFullYear() + y);
+      if (d > end) break;
+      events.push({ date: d, amount: annualInterest, label: 'Rente jaar ' + y, type: 'periodic' });
+    }
+    events.push({ date: end, amount: amount, label: 'Hoofdsom terugbetaling', type: 'bullet' });
+  }
+  return events;
+}
+
+function vrEndValue(p) {
+  return vrPayouts(p).reduce((s, e) => s + e.amount, 0);
+}
+
+function vrReceived(p) {
+  const now = new Date();
+  return vrPayouts(p).filter(e => e.date <= now).reduce((s, e) => s + e.amount, 0);
+}
+
+function vrNextPayout(p) {
+  const now = new Date();
+  return vrPayouts(p).find(e => e.date > now) || null;
+}
+
+function vrIsExpired(p) {
+  const end = new Date(p.startDate);
+  end.setMonth(end.getMonth() + (p.months || 12));
+  return new Date() > end;
+}
+
+function vrTotalCurrentValue(p) {
+  // Current value = received + unreceived (still locked in)
+  const now = new Date();
+  const start = new Date(p.startDate);
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + (p.months || 12));
+  if (now >= end) return vrEndValue(p); // fully paid out
+  // Accrue value linearly between start and end
+  const elapsed = (now - start) / (end - start);
+  return p.amount + (p.amount * (p.rate/100) * ((p.months||12)/12) * elapsed);
+}
+
+function renderVastrentend() {
+  const now = new Date();
+  const soon = new Date(); soon.setMonth(soon.getMonth() + 3);
+
+  // Metrics
+  const totalInv = vrPositions.reduce((s,p) => s + (p.amount||0), 0);
+  const totalEnd = vrPositions.reduce((s,p) => s + vrEndValue(p), 0);
+  const totalRec = vrPositions.reduce((s,p) => s + vrReceived(p), 0);
+  document.getElementById('vr-total-inv').textContent = fmt(totalInv);
+  document.getElementById('vr-total-end').textContent = fmt(totalEnd);
+  document.getElementById('vr-received').textContent = fmt(totalRec);
+  document.getElementById('vr-remaining').textContent = fmt(totalEnd - totalRec);
+
+  // Timeline: all future payouts across all positions, sorted by date
+  const allEvents = [];
+  vrPositions.forEach(p => {
+    vrPayouts(p).forEach(e => {
+      allEvents.push({ ...e, posName: p.name });
+    });
+  });
+  allEvents.sort((a,b) => a.date - b.date);
+  const futureEvents = allEvents.filter(e => e.date > now).slice(0, 8);
+  const timelineEl = document.getElementById('vr-timeline');
+  if (futureEvents.length === 0) {
+    timelineEl.innerHTML = `<div class="empty-state" style="padding:1rem">Geen komende uitbetalingen.</div>`;
+  } else {
+    timelineEl.innerHTML = `<div class="vr-timeline">${futureEvents.map(e => {
+      const isSoon = e.date <= soon;
+      const daysLeft = Math.round((e.date - now) / 86400000);
+      return `<div class="vr-event${isSoon?' soon':''}">
+        <span class="vr-date">${e.date.toLocaleDateString('nl-NL',{day:'2-digit',month:'short',year:'numeric'})}</span>
+        <span class="vr-name">${e.posName} <span style="color:var(--text3);font-weight:400;font-size:11px">— ${e.label}</span></span>
+        <span class="vr-amount">${fmt(e.amount)}</span>
+        <span class="vr-badge ${e.type}">${e.type==='bullet'?'Bullet':'Rente'}</span>
+        <span style="font-size:11px;color:${isSoon?'var(--amber)':'var(--text3)'}">over ${daysLeft} dagen</span>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  // Table
+  const tbody = document.getElementById('vr-body');
+  tbody.innerHTML = '';
+  if (vrPositions.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="11"><div class="empty-state">Nog geen vastrentende investeringen — klik op "+ investering toevoegen".</div></td></tr>`;
+    return;
+  }
+  vrPositions.forEach((p, i) => {
+    const endVal = vrEndValue(p);
+    const next = vrNextPayout(p);
+    const expired = vrIsExpired(p);
+    const endDate = new Date(p.startDate); endDate.setMonth(endDate.getMonth() + (p.months||12));
+    const statusHtml = expired
+      ? `<span class="status-done">Afgelopen</span>`
+      : next && next.date <= soon
+        ? `<span class="status-soon">Binnenkort</span>`
+        : `<span class="status-active">Actief</span>`;
+    const nextHtml = next
+      ? `${next.date.toLocaleDateString('nl-NL',{day:'2-digit',month:'short',year:'2-digit'})}<br><span style="font-size:10px;color:var(--green)">${fmt(next.amount)}</span>`
+      : `<span style="color:var(--text3);font-size:11px">—</span>`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" value="${p.name}" onchange="vrPositions[${i}].name=this.value;saveVR();renderVastrentend()"/></td>
+      <td>
+        <select onchange="vrPositions[${i}].payoutType=this.value;saveVR();renderVastrentend()" style="font-size:11px;background:transparent;border:none;color:var(--text2);cursor:pointer;outline:none">
+          <option value="bullet"${p.payoutType==='bullet'?' selected':''}>Bullet</option>
+          <option value="periodic"${p.payoutType==='periodic'?' selected':''}>Periodiek</option>
+        </select>
+      </td>
+      <td><input type="number" value="${p.amount||0}" min="0" step="100" onchange="vrPositions[${i}].amount=+this.value;saveVR();renderVastrentend()" style="font-family:var(--mono)"/></td>
+      <td><input type="date" value="${p.startDate||''}" onchange="vrPositions[${i}].startDate=this.value;saveVR();renderVastrentend()" style="font-size:11px;font-family:var(--mono);color:var(--text2)"/></td>
+      <td><input type="number" value="${p.months||12}" min="1" step="1" onchange="vrPositions[${i}].months=+this.value;saveVR();renderVastrentend()" style="font-family:var(--mono)"/> mnd</td>
+      <td><input type="number" value="${p.rate||0}" min="0" max="100" step="0.5" onchange="vrPositions[${i}].rate=+this.value;saveVR();renderVastrentend()" style="font-family:var(--mono)"/>%</td>
+      <td style="font-size:11px;color:var(--text2)">${p.payoutType==='bullet'?'Einde looptijd':'Jaarlijks'}</td>
+      <td style="font-family:var(--mono);color:var(--green)">${fmt(endVal)}</td>
+      <td style="font-size:12px;font-family:var(--mono)">${nextHtml}</td>
+      <td>${statusHtml}</td>
+      <td><button class="del-btn" onclick="vrPositions.splice(${i},1);saveVR();renderVastrentend()">✕</button></td>`;
+    tbody.appendChild(tr);
+  });
+
+  // Update portfolio metrics to include VR
+  updateMetrics();
+  refreshCharts();
+}
+
 function renderAll() { savePositions(); renderPortfolio(); }
 
 // --- INIT ---
@@ -935,6 +1148,7 @@ window.addEventListener('load', () => {
   if (saved) document.getElementById('sheet-url').value = saved;
 
   loadPositions(); // restore from localStorage if available
+  loadVR();        // restore vastrentend positions
 
   const isDark = true;
   const gc = 'rgba(255,255,255,0.06)';
